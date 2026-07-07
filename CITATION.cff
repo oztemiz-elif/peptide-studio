@@ -1,0 +1,27 @@
+# This CITATION.cff file was generated for PeptideStudio.
+# Update the `version`/`date-released` fields on release, and add a
+# `preferred-citation:` block once the accompanying paper is published.
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "PeptideStudio"
+abstract: >-
+  A fast, fully client-side web application for visualizing mass-spectrometry
+  peptide coverage mapped onto a protein sequence, built for proteomics and
+  degradomics workflows such as endolysosomal degradome time-courses.
+authors:
+  - family-names: "Öztemiz"
+    given-names: "Elif"
+    orcid: "https://orcid.org/0000-0001-8002-7921"
+    affiliation: "Department of Biosciences and Medical Biology, University of Salzburg"
+license: "EUPL-1.2"
+repository-code: "https://github.com/oztemiz-elif/peptide-studio"
+url: "https://github.com/oztemiz-elif/peptide-studio"
+version: "1.0.0"
+date-released: "2026-07-08"
+keywords:
+  - proteomics
+  - degradomics
+  - peptidomics
+  - mass spectrometry
+  - data visualization

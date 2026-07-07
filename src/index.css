@@ -1,0 +1,106 @@
+:root {
+  --panel-w: 360px;
+  --border: #d9dde3;
+  --bg: #f5f6f8;
+  --accent: #2563eb;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  color: #1c2128;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+
+.app { display: flex; min-height: 100vh; }
+
+/* --- config panel --- */
+.panel {
+  width: var(--panel-w);
+  flex: 0 0 var(--panel-w);
+  background: #fff;
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+}
+.panel h1 {
+  margin: 0 0 14px; padding-bottom: 10px; border-bottom: 2px solid var(--border);
+}
+.panel h1 .logo { display: block; width: 260px; height: auto; margin: 0 auto; }
+.panel section { margin-bottom: 20px; }
+.panel h2 {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+  color: #374151;
+  border-left: 3px solid var(--accent); border-bottom: 1px solid var(--border);
+  padding: 0 0 4px 8px; margin: 0 0 10px;
+}
+.field { margin-bottom: 8px; display: flex; flex-direction: column; gap: 3px; }
+.field label { font-size: 12px; color: #1c2128; font-weight: 500; }
+/* Exclude checkboxes/radios from the full-width rule — they are inline controls. */
+.field input:not([type=checkbox]):not([type=radio]),
+.field select,
+.field textarea {
+  padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px;
+  font: inherit; width: 100%; background: #fff;
+}
+.field input:not([type=checkbox]):not([type=radio]):focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+}
+/* Checkbox rows: checkbox on the left, label text on the right. */
+label.cb {
+  display: flex !important;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #1c2128;
+  cursor: pointer;
+  user-select: none;
+}
+label.cb input[type=checkbox] { flex: 0 0 auto; width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent); }
+.row { display: flex; gap: 6px; }
+.row > * { flex: 1; }
+.colors { display: flex; flex-wrap: wrap; gap: 4px; }
+.colors input[type=color] { width: 34px; height: 28px; padding: 0; border: 1px solid var(--border); }
+button {
+  font: inherit; padding: 6px 10px; border: 1px solid var(--border);
+  border-radius: 6px; background: #fff; cursor: pointer;
+}
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button:hover { filter: brightness(0.97); }
+.hint { color: #6b7280; padding: 24px; }
+.error { color: #b91c1c; font-size: 12px; }
+.ok { color: #15803d; font-size: 12px; }
+.warn { color: #b45309; font-size: 12px; }
+.muted { color: #6b7280; font-size: 12px; }
+.tag {
+  display: inline-block; background: #eef2ff; color: #3730a3;
+  border-radius: 4px; padding: 1px 6px; margin: 2px 2px 0 0; font-size: 12px;
+}
+
+/* --- main view --- */
+.main { flex: 1; padding: 16px; overflow-x: auto; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.figures { display: flex; flex-direction: column; gap: 16px; }
+.figure { display: flex; flex-direction: column; gap: 12px; }
+.page {
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); overflow: auto;
+}
+.page-footer { text-align: right; color: #9ca3af; font-size: 11px; margin-top: 4px; }
+
+/* --- removed peptides report --- */
+.report { margin-top: 20px; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.report table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.report th, .report td { border: 1px solid var(--border); padding: 4px 6px; text-align: left; }
+.report th { background: #f9fafb; }
+.metrics { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
+.metric { background: #f9fafb; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
+.metric .n { font-size: 20px; font-weight: 700; }
+.metric .l { font-size: 11px; color: #6b7280; }
+details summary { cursor: pointer; font-weight: 600; }
