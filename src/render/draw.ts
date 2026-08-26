@@ -4,7 +4,7 @@
 // a configured font size of N renders as N px, so print/export honor the chosen sizes.
 
 import { Config } from '../state/config';
-import { cellSize, FigureLayout, leftLabelWidth, rowPitch, WrapRowSlice } from '../model/layout';
+import { cellSize, FigureLayout, leftLabelWidth, residueRowUnits, rowPitch, WrapRowSlice } from '../model/layout';
 import { formatRange } from '../model/intensity';
 import { groupOverlappingRegions } from '../model/regions';
 
@@ -61,7 +61,6 @@ export interface DrawnPage {
 }
 
 const RULER_UNITS = 1.6;
-const RESIDUE_ROW_UNITS = 1;
 const BAND_GAP_UNITS = 1;
 const PANEL_GAP_UNITS = 1.5;
 const TITLE_UNITS = 3;
@@ -205,6 +204,11 @@ export function drawPage(
 
     // --- residue-letter row ---
     const resRowY = y;
+    // Normally one cell, but taller when a descender would otherwise finish on the rule under
+    // the row — see residueRowUnits. Everything bounding this row is sized from it rather than
+    // from `cell`, so a region's wash and outline grow with the row instead of cutting a Q's
+    // tail. The letters themselves stay centred on the cell and do not move.
+    const resRowH = residueRowUnits(config) * cell;
 
     // Highlight fill washes (clipped to window) are pushed before the letters so they sit
     // BEHIND the text, like a highlighter mark — not on top of it. This also keeps the EPS
@@ -217,7 +221,7 @@ export function drawPage(
         if (s > e) continue;
         const pad = gi * 2;
         const hColor = highlightColorMap.get(`${rs}-${re}`) ?? '#000000';
-        prims.push({ k: 'rect', x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: cell + pad * 2, fill: hColor, opacity: 0.12 });
+        prims.push({ k: 'rect', x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: resRowH + pad * 2, fill: hColor, opacity: 0.12 });
       }
     });
 
@@ -243,11 +247,11 @@ export function drawPage(
         if (s > e) continue;
         const pad = gi * 2;
         const hColor = highlightColorMap.get(`${rs}-${re}`) ?? '#000000';
-        prims.push({ k: 'rect', x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: cell + pad * 2, fill: 'none', stroke: hColor, sw: 1.5 });
+        prims.push({ k: 'rect', x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: resRowH + pad * 2, fill: 'none', stroke: hColor, sw: 1.5 });
       }
     });
 
-    y = resRowY + RESIDUE_ROW_UNITS * cell;
+    y = resRowY + resRowH;
 
     // underline the reference-sequence row to separate it from the peptide bands
     prims.push({ k: 'line', x1: colLeft, y1: y, x2: panelRight, y2: y, stroke: '#000', sw: 1.2 });
