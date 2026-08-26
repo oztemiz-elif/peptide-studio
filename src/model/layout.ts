@@ -86,7 +86,6 @@ export interface LayoutResult {
 }
 
 const RULER_UNITS = 1.6;
-const RESIDUE_ROW_UNITS = 1;
 const BAND_GAP_UNITS = 1;
 const PANEL_GAP_UNITS = 1.5;
 
@@ -112,6 +111,43 @@ export const PT_PER_MM = 72 / 25.4;
  */
 export function cellSize(config: Config): number {
   return Math.max(4, Math.round(config.fontSizes.residue * (config.cellScale ?? 1.1)));
+}
+
+/** Baseline shift (× font size) placing a capital letter's visual centre on the requested y.
+ *  Empirically ≈ half the cap height; see PrimSvg for why it is baked into `y` rather than
+ *  expressed as `dominant-baseline`. */
+export const CENTER_BASELINE_RATIO = 0.356;
+/** How far a descender drops below the baseline, as a fraction of the font size. */
+const DESCENDER_RATIO = 0.22;
+/** Space left under the deepest glyph before the rule below it, in pt. Absolute rather than
+ *  scaled, because the rules it has to clear — the 1.2 pt sequence underline, the 1.5 pt
+ *  outline of a highlight region — are themselves a fixed width at any font size. */
+const RULE_CLEARANCE_PT = 1;
+
+/**
+ * Height (in cell units) of the sequence row.
+ *
+ * A cell is sized to hold a capital letter, because 19 of the 20 amino-acid codes are exactly
+ * that. **Q is the exception** — its tail drops below the baseline, and the sequence row is the
+ * one place where something heavy is drawn hard against the bottom of the row: the solid rule
+ * separating the sequence from the bands, and the outline of any highlight region sitting on
+ * it. The tail lands on that rule, ink on ink, and vanishes — so a Q reads as an O.
+ *
+ * The row is therefore made tall enough for the tail to finish clear of it. **The letters do
+ * not move**; the space is added below them, so the row is unchanged above the baseline and
+ * only what follows the row shifts down. That matters: raising the letters instead would push
+ * a T's crossbar into the rule along the top of its box, and a horizontal stroke landing on a
+ * horizontal rule merges into it — a T would read as an I.
+ *
+ * Peptide squares need none of this. They sit on a row pitch with space between them and are
+ * bounded by a hairline rather than a rule, which a tail crosses without being swallowed.
+ */
+export function residueRowUnits(config: Config): number {
+  const cell = cellSize(config);
+  // Where a descender ends, measured down from the top of the row: the letter is centred on
+  // its cap height, then the tail hangs below the baseline.
+  const tail = cell / 2 + config.fontSizes.residue * (CENTER_BASELINE_RATIO + DESCENDER_RATIO);
+  return Math.max(1, (tail + RULE_CLEARANCE_PT) / cell);
 }
 
 /**
@@ -285,7 +321,7 @@ function buildBands(
 // style is more compact), so their contribution is expressed as a fraction of a cell.
 function wrapRowHeight(bands: BandLayout[], panelStart: boolean, config: Config): number {
   const pitchUnits = rowPitch(config) / cellSize(config);
-  let h = RULER_UNITS + RESIDUE_ROW_UNITS;
+  let h = RULER_UNITS + residueRowUnits(config);
   for (const band of bands) h += band.rowCount * pitchUnits + BAND_GAP_UNITS;
   if (panelStart) h += PANEL_GAP_UNITS;
   return h;
@@ -407,7 +443,7 @@ function computePages(rows: WrapRowLayout[], config: Config, seqLen: number): Pa
   const PAGE_HEIGHT_SLACK = 1.25; // cells: 1 for bottom padding, 0.25 for rounding
   const unitsPerPage = Math.max(1, printableHPt / cell - PAGE_HEIGHT_SLACK);
   const pitchUnits = rowPitch(config) / cell;
-  const headerUnits = RULER_UNITS + RESIDUE_ROW_UNITS;
+  const headerUnits = RULER_UNITS + residueRowUnits(config);
 
   const pages: PageContent[] = [];
   let pageRows: WrapRowSlice[] = [];
