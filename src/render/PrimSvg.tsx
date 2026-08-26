@@ -6,11 +6,10 @@
 import { forwardRef, useRef } from 'react';
 import { DrawnPage, Prim } from './draw';
 import { setConfig } from '../state/store';
-
-// Baseline shift (× font size) that places a capital letter / digit's visual centre on the
-// requested y, replacing `dominant-baseline: central` for Word/Office compatibility.
-// Empirically ≈ half the cap height; measured at 0.356 against the old central rendering.
-const CENTER_BASELINE_RATIO = 0.356;
+// Baseline shift that places a capital letter / digit's visual centre on the requested y,
+// replacing `dominant-baseline: central` for Word/Office compatibility. Shared with layout,
+// which needs the same number to work out how far a descender reaches below the row.
+import { CENTER_BASELINE_RATIO } from '../model/layout';
 
 function renderPrim(p: Prim, i: number) {
   switch (p.k) {
