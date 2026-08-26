@@ -3,7 +3,7 @@ import { assignRows } from './peptides';
 import { colorIndex, formatRange, intensityBins, toSuperscript, transformValue } from './intensity';
 import { checkOverlap, groupOverlappingRegions, parseIndices, parseHighlightRegions } from './regions';
 import { computeIntensityScale, identifyRemovedPeptides, passesFilters } from './filtering';
-import { autoResiduesPerRow, buildLayout, cellSize, leftLabelWidth, pageDimsPt, PT_PER_MM, rowPitch } from './layout';
+import { autoResiduesPerRow, buildLayout, cellSize, CENTER_BASELINE_RATIO, leftLabelWidth, pageDimsPt, PT_PER_MM, rowPitch } from './layout';
 import { Peptide } from './peptides';
 import { defaultConfig } from '../state/config';
 import { drawPage, pageCount } from '../render/draw';
@@ -331,6 +331,85 @@ describe('layout', () => {
       expected = s.rowEnd;
     }
     expect(expected).toBe(12);
+  });
+
+  it("a Q's tail on the sequence row stays clear of the rule under it", () => {
+    // Q is the only amino-acid code with a descender, and the sequence row is the one place
+    // something heavy is drawn hard against the bottom of the row: the solid rule separating
+    // the sequence from the bands, and the outline of a highlight region sitting on it. The
+    // tail landed on that rule, ink on ink, and a Q read as an O.
+    const seq = 'ACDEFGHIKLMNPQRSTVWYACDEFGHIKL';
+    // The 5/0.85 pair is a real published-figure setting, where the cell rounds down to 4 pt
+    // and is shorter than the glyph.
+    for (const [cellScale, residue] of [[1.4, 10], [1.1, 10], [1.0, 10], [0.85, 5], [0.75, 10]]) {
+      const base = defaultConfig();
+      const cfg = {
+        ...base,
+        intensityCols: ['t0'],
+        cellScale,
+        fontSizes: { ...base.fontSizes, residue },
+        highlightRegions: [[12, 16] as [number, number]], // brackets the Q at residue 14
+        highlightColors: ['#464646'],
+      };
+      const at = `residue ${residue} / cellScale ${cellScale}`;
+      const { figures } = buildLayout(seq, peptides, cfg, 30);
+      const page = drawPage(figures[0], 0, seq, cfg);
+
+      // The rule under the sequence row: the topmost full-width solid black line.
+      const rule = page.prims
+        .filter((p) => p.k === 'line' && p.stroke === '#000' && p.y1 === p.y2)
+        .sort((a, b) => (a.k === 'line' && b.k === 'line' ? a.y1 - b.y1 : 0))[0];
+      expect(rule, `no sequence rule at ${at}`).toBeTruthy();
+      if (rule?.k !== 'line') throw new Error('unreachable');
+
+      const seqQ = page.prims.find(
+        (p) => p.k === 'text' && p.text === 'Q' && p.size === residue && p.y < rule.y1,
+      );
+      expect(seqQ, `no sequence-row Q at ${at}`).toBeTruthy();
+      if (seqQ?.k !== 'text') throw new Error('unreachable');
+
+      // `center: true`, so the drawn baseline sits below the stated y by this much (PrimSvg).
+      const baseline = seqQ.y + residue * CENTER_BASELINE_RATIO;
+      const tail = baseline + residue * 0.22;
+      expect(tail, `tail reaches the rule at ${at}`).toBeLessThan(rule.y1);
+      // The highlight outline is boxed to the row, so it has to end below the tail as well.
+      const outlines = page.prims.filter((p) => p.k === 'rect' && p.fill === 'none' && p.sw === 1.5);
+      expect(outlines.length, `no highlight outline at ${at}`).toBeGreaterThan(0);
+      for (const o of outlines) {
+        if (o.k !== 'rect') continue;
+        expect(tail, `tail reaches an outline at ${at}`).toBeLessThan(o.y + o.h);
+      }
+    }
+  });
+
+  it('leaves the letters themselves exactly where they were', () => {
+    // The row grows downward only. Nothing above the baseline moves, so a T's crossbar keeps
+    // the clearance from the top of its box that it always had — raising the letters instead
+    // would merge that horizontal stroke into the horizontal rule and a T would read as an I.
+    const seq = 'ACDEFGHIKLMNPQRSTVWYACDEFGHIKL';
+    const base = defaultConfig();
+    const cfg = { ...base, intensityCols: ['t0'], cellScale: 0.85, fontSizes: { ...base.fontSizes, residue: 5 } };
+    const cell = cellSize(cfg);
+    const { figures } = buildLayout(seq, peptides, cfg, 30);
+    const page = drawPage(figures[0], 0, seq, cfg);
+
+    let checked = 0;
+    for (const p of page.prims) {
+      if (p.k !== 'text' || p.size !== 5 || !/^[A-Z]$/.test(p.text)) continue;
+      // Centred on a cell-sized box, which is what both the sequence row and a peptide
+      // square do — the row growing taller must not have moved either.
+      const box = page.prims.find(
+        (r) =>
+          r.k === 'rect' &&
+          Math.abs(r.x + cell / 2 - p.x) < 0.01 &&
+          Math.abs(r.h - cell) < 0.01 &&
+          Math.abs(r.y + cell * 0.5 - p.y) < 0.01,
+      );
+      if (!box) continue;
+      checked++;
+      expect(p.center).toBe(true);
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 
   it('rowPitch: line style packs rows tighter than the full letter-cell box style', () => {
