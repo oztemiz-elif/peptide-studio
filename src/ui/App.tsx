@@ -12,6 +12,7 @@ import { Figures } from '../render/Figures';
 import { exportAll } from '../export/toZip';
 import { DataInputs } from './DataInputs';
 import { ConfigPanel } from './ConfigPanel';
+import { CoverageProfile } from './CoverageProfile';
 import { RemovedPeptides } from './RemovedPeptides';
 import { useContainerWidth } from './useContainerWidth';
 import { emptySession, SessionData } from './session';
@@ -89,19 +90,11 @@ export function App() {
     let cancelled = false;
     const id = requestAnimationFrame(async () => {
       try {
-        let base = sanitizeFilename(config.titleText);
-        if (config.addDatetimeToFilename) base = `${base}_${datetimeSuffix()}`;
-
         if (outputAction === 'print') {
-          // Browsers embed document.title as the PDF's title metadata when printing to "Save
-          // as PDF" — without this, every exported PDF would show the static "PeptideStudio"
-          // page title (from index.html) instead of the actual figure/file name. Restore the
-          // app's normal title once the print dialog closes.
-          const prevTitle = document.title;
-          if (base) document.title = base;
           window.print();
-          document.title = prevTitle;
         } else {
+          let base = sanitizeFilename(config.titleText);
+          if (config.addDatetimeToFilename) base = `${base}_${datetimeSuffix()}`;
           await exportAll(
             base,
             outputAction,
@@ -196,6 +189,8 @@ export function App() {
           </label>
           {exportMsg && <span className="error">{exportMsg}</span>}
         </div>
+
+        <CoverageProfile peptides={peptides} proteinSeq={data.proteinSeq} config={config} />
 
         <Figures
           proteinSeq={data.proteinSeq}

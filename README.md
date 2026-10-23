@@ -31,6 +31,52 @@ Peptide intensities derived from mass spectrometry are mapped onto individual pe
 - **Export** — PNG, JPEG, SVG, EPS and a ZIP of all figures.
 - **No setup persistence headaches** — config auto-saves to `localStorage`, with JSON import/export.
 
+## 🆕 What's new since the publication
+
+The [paper cited below](#-citation) describes PeptideStudio **v1.0.0**. The current version adds
+analysis features that the paper does not cover:
+
+- **Cluster detection** — one click finds families of peptides that share an N-terminus or a
+  C-terminus: the pattern left behind when one species is trimmed from the other end. A position
+  anchors a cluster when enough peptides agree on it *and* it stands out against its own
+  neighbourhood, so a busy stretch of the protein cannot hide a cluster elsewhere. Results are
+  added to the highlight-region list, ready to edit, recolour or delete, and the output says how
+  each boundary was decided — so you know which edges are quotable. A single **Sensitivity** dial
+  covers everyday use.
+
+  **Detection is a starting point, not a verdict.** No setting separates a real cluster from a
+  coincidence in every dataset: move the dial one step and boundaries move with it. What the
+  tool does is narrow a whole protein down to the few positions worth looking at, and show you
+  the evidence behind each one — so the judgement that used to mean reading a figure by eye
+  becomes a decision you make against numbers, quickly. **The final call on where a cluster
+  starts and ends is yours.**
+- **Coverage & termini profile** — an on-screen panel above the figure showing how many peptides
+  cover each residue, where they begin and end, and the threshold each position must clear to
+  anchor a cluster. Orange bars count the peptides beginning at a residue, green bars those
+  ending there, and a bar is drawn solid when that position is strong enough to anchor a
+  cluster. Zoom and pan along the sequence; a crosshair names the residue under the pointer.
+  The panel is an analysis view and is never printed or included in figure exports; it has its
+  own PNG / JPEG / SVG export.
+- **Hand-adjusted boundaries** — grab either edge of a cluster on the profile and slide it to
+  the residue you want. It moves **freely, one residue at a time**, and is never pulled onto a
+  position the detector happens to like — the point of sliding is to overrule the detector. As
+  you drag, the readout names the residue you are over and how many peptides begin and end
+  there, so you can put the boundary on the position with the strongest agreement rather than
+  on the one the settings produced. A boundary you set by hand is **kept**: re-running detection
+  replaces only the clusters it generated itself and leaves yours alone.
+- **Marked-region tables** — for every region currently marked: how many peptides it contains,
+  how many begin at its start position and end at its end position, and the weakest, typical and
+  strongest peptide in it. A second table breaks the peptide count down by time point. Both copy
+  to the clipboard or export as TSV / XLSX.
+- **Cleavage export** — every peptide bond in the sequence with the number of peptide termini
+  supporting it, per time point, named by P1 and P1′. Written as a spreadsheet with filtered and
+  unfiltered sheets, so a site missing from a figure can be traced to a filter rather than to the
+  data.
+- **Region marking styles** — a region can be marked by two edges on the sequence row, by edges
+  spanning every time-point track, or by a bracket above the sequence. Each region also has its
+  own fill opacity; where a fill is dark the letters switch to white automatically so the
+  sequence stays readable.
+
 ## 🚀 Getting started
 
 No coding experience is required — these steps work even if you've never used a terminal before.
@@ -215,11 +261,16 @@ EUPL-1.2 — see [LICENSE](LICENSE).
 
 ## 📑 Citation
 
-A publication that includes the description of PeptideStudio as part of a broader study is in
-preparation. This placeholder will be replaced with the full citation once it is available.
+PeptideStudio is described as part of the following study. If you use the tool, please cite:
 
-In the meantime, GitHub's **"Cite this repository"** button in the sidebar (powered by
-[`CITATION.cff`](CITATION.cff)) generates a software citation (APA/BibTeX) in one click.
+> Öztemiz E, Regl C, Brandstetter H, Huber CG, Verhoeckx K and Gadermaier G (2026)
+> The optimized endolysosomal degradation assay with standardized enzyme activity represents an
+> orthogonal method for predicting protein immunogenicity and T cell epitopes.
+> *Front. Allergy* 7:1936335. doi: [10.3389/falgy.2026.1936335](https://doi.org/10.3389/falgy.2026.1936335)
+
+
+GitHub's **"Cite this repository"** button in the sidebar (powered by
+[`CITATION.cff`](CITATION.cff)) also generates a software citation (APA/BibTeX) in one click.
 
 ## 🤝 Contributing
 

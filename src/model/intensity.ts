@@ -47,8 +47,10 @@ const SUPERSCRIPT: Record<string, string> = {
   '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻',
 };
 
-export function toSuperscript(num: number): string {
-  const [base, expStr] = num.toExponential(2).split('e');
+// `digits` is the number of decimals kept. It defaults to 2 so the legend and every existing
+// caller are unchanged; tables that need something terser pass 1.
+export function toSuperscript(num: number, digits = 2): string {
+  const [base, expStr] = num.toExponential(digits).split('e');
   const exp = parseInt(expStr, 10);
   const sup = String(exp)
     .split('')
@@ -57,29 +59,29 @@ export function toSuperscript(num: number): string {
   return `${base} × 10${sup}`;
 }
 
-export function toExponentialE(num: number): string {
-  return num.toExponential(2).replace('e', 'E');
+export function toExponentialE(num: number, digits = 2): string {
+  return num.toExponential(digits).replace('e', 'E');
 }
 
 export function toFullInteger(num: number): string {
   return Math.trunc(num).toLocaleString('en-US');
 }
 
-export function toFloatNotation(num: number): string {
-  return num.toFixed(2);
+export function toFloatNotation(num: number, digits = 2): string {
+  return num.toFixed(digits);
 }
 
-export function formatNumber(num: number, notation: Notation): string {
+export function formatNumber(num: number, notation: Notation, digits = 2): string {
   switch (notation) {
     case 'exponential':
-      return toExponentialE(num);
+      return toExponentialE(num, digits);
     case 'integer':
       return toFullInteger(num);
     case 'float':
-      return toFloatNotation(num);
+      return toFloatNotation(num, digits);
     case 'superscript':
     default:
-      return toSuperscript(num);
+      return toSuperscript(num, digits);
   }
 }
 

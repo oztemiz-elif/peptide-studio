@@ -92,6 +92,56 @@ export interface Config {
   highlightRegions: Range[];
   /** Stroke color for each highlight region rectangle, parallel to highlightRegions. */
   highlightColors: string[];
+  /**
+   * Per region (parallel to highlightRegions): when true the outline is drawn as one tall
+   * rectangle spanning the reference-sequence row *and* every time-point band below it, so
+   * the range is boxed across all time points at once. When false (default) only the
+   * sequence row is boxed, as before.
+   */
+  highlightSpanAll: boolean[];
+  /**
+   * Per region (parallel to highlightRegions): mark the range with a bracket above the
+   * sequence instead of with edges beside it — a rule across the range with a short leg
+   * turning down at each end, the usual way a domain or an epitope is annotated. The three
+   * styles are exclusive, and this one wins: a bracketed region draws no vertical edges,
+   * whatever `highlightSpanAll` says. Its wash still follows `highlightOpacity`.
+   */
+  highlightBracket: boolean[];
+  /** Optional caption per region (parallel to highlightRegions), drawn in the region's
+   *  colour in the ruler row above its box. Empty string = no label. */
+  highlightLabels: string[];
+  /**
+   * Fill opacity per region, 0-100 (parallel to highlightRegions). The wash is always painted
+   * behind the residue letters, so even at 100 the sequence stays on top and readable; where
+   * the resulting background is dark the letters are switched to white automatically.
+   * Unset falls back to the previous fixed values, so existing figures are unchanged.
+   */
+  highlightOpacity: number[];
+  /**
+   * Which regions were produced by cluster detection rather than added by hand (parallel to
+   * highlightRegions). Re-running detection replaces exactly these, leaving manual regions
+   * untouched.
+   */
+  highlightAuto: boolean[];
+
+  // --- cluster detection (see model/clusters.ts) ---
+  /** Shortest cluster to report, in residues. */
+  clusterMinLength: number;
+  /** Longest cluster to report — a hard cap on the extent, not a filter on peptides. */
+  clusterMaxLength: number;
+  /** How many peptides must begin/finish at a position before it counts as shared. */
+  clusterMinSharedPeptides: number;
+  /** How many times its local average a position must carry to anchor a cluster. */
+  clusterEnrichmentFactor: number;
+  /** What % of a family must finish at one position for that to count as a second edge. */
+  clusterConcentrationPercent: number;
+  /** A similar-length cluster with this % or more of itself inside a stronger one is a duplicate. */
+  clusterMergeOverlapPercent: number;
+  /** Keep a derived sub-cluster as its own entry (true) or merge it into its parent (false). */
+  clusterHierarchical: boolean;
+  /** How much of a region — or of a peptide — the two have to share before the peptide is
+   *  counted as belonging to the region. See `inRegion` in model/regions.ts. */
+  clusterMembershipPercent: number;
   /** peptideId ("start-end") -> 0-based positions within the peptide that are modified. */
   modifications: Record<string, number[]>;
 
@@ -206,6 +256,21 @@ export function defaultConfig(): Config {
 
     highlightRegions: [],
     highlightColors: [],
+    highlightSpanAll: [],
+    highlightLabels: [],
+    highlightOpacity: [],
+    highlightAuto: [],
+    highlightBracket: [],
+
+    clusterMinLength: 8,
+    clusterMaxLength: 30,
+    clusterMinSharedPeptides: 3,
+    clusterEnrichmentFactor: 3,
+    clusterConcentrationPercent: 40,
+    clusterMergeOverlapPercent: 80,
+    clusterHierarchical: false,
+    clusterMembershipPercent: 50,
+
     modifications: {},
 
     peptideStyle: 'box',

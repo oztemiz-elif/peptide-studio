@@ -305,7 +305,7 @@ function UniProtSearch({ setData }: { setData: Props['setData'] }) {
       <div className="row">
         <input
           value={query}
-          placeholder="name or accession (e.g. arah9)"
+          placeholder="name or accession (e.g. P02144)"
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && run()}
         />

@@ -1,6 +1,5 @@
 # This CITATION.cff file was generated for PeptideStudio.
-# Update the `version`/`date-released` fields on release, and add a
-# `preferred-citation:` block once the accompanying paper is published.
+# Update the `version`/`date-released` fields on release.
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
@@ -25,3 +24,32 @@ keywords:
   - peptidomics
   - mass spectrometry
   - data visualization
+# The paper in which PeptideStudio is described. GitHub's "Cite this repository"
+# button offers this in preference to the software entry above.
+preferred-citation:
+  type: article
+  title: >-
+    The optimized endolysosomal degradation assay with standardized enzyme
+    activity represents an orthogonal method for predicting protein
+    immunogenicity and T cell epitopes
+  authors:
+    - family-names: "Öztemiz"
+      given-names: "Elif"
+      orcid: "https://orcid.org/0000-0001-8002-7921"
+    - family-names: "Regl"
+      given-names: "Christof"
+    - family-names: "Brandstetter"
+      given-names: "Hans"
+    - family-names: "Huber"
+      given-names: "Christian G."
+    - family-names: "Verhoeckx"
+      given-names: "Kitty"
+    - family-names: "Gadermaier"
+      given-names: "Gabriele"
+  journal: "Frontiers in Allergy"
+  year: 2026
+  month: 9
+  volume: 7
+  number: "1936335"
+  doi: "10.3389/falgy.2026.1936335"
+  url: "https://doi.org/10.3389/falgy.2026.1936335"

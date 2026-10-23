@@ -10,6 +10,7 @@ import { Config, Range } from '../state/config';
 import { colorIndex, transformValue } from './intensity';
 import { IntensityScale, computeIntensityScale, passesFilters } from './filtering';
 import { Peptide, assignRows, peptideId } from './peptides';
+import { groupOverlappingRegions } from './regions';
 
 /** A peptide clipped to a wrap-row window, with its resolved color bin and global row. */
 export interface ClippedPeptide {
@@ -113,8 +114,8 @@ export function cellSize(config: Config): number {
   return Math.max(4, Math.round(config.fontSizes.residue * (config.cellScale ?? 1.1)));
 }
 
-/** Baseline shift (× font size) placing a capital letter's visual centre on the requested y.
- *  Empirically ≈ half the cap height; see PrimSvg for why it is baked into `y` rather than
+/** Baseline shift (x font size) placing a capital letter's visual centre on the requested y.
+ *  Empirically ~half the cap height; see PrimSvg for why it is baked into `y` rather than
  *  expressed as `dominant-baseline`. */
 export const CENTER_BASELINE_RATIO = 0.356;
 /** How far a descender drops below the baseline, as a fraction of the font size. */
@@ -135,9 +136,7 @@ const RULE_CLEARANCE_PT = 1;
  *
  * The row is therefore made tall enough for the tail to finish clear of it. **The letters do
  * not move**; the space is added below them, so the row is unchanged above the baseline and
- * only what follows the row shifts down. That matters: raising the letters instead would push
- * a T's crossbar into the rule along the top of its box, and a horizontal stroke landing on a
- * horizontal rule merges into it — a T would read as an I.
+ * only what follows the row shifts down.
  *
  * Peptide squares need none of this. They sit on a row pitch with space between them and are
  * bounded by a hairline rather than a rule, which a tail crosses without being swallowed.
@@ -148,6 +147,68 @@ export function residueRowUnits(config: Config): number {
   // its cap height, then the tail hangs below the baseline.
   const tail = cell / 2 + config.fontSizes.residue * (CENTER_BASELINE_RATIO + DESCENDER_RATIO);
   return Math.max(1, (tail + RULE_CLEARANCE_PT) / cell);
+}
+
+/** How far a bracket's end legs turn down towards the sequence, in pt. */
+export const BRACKET_LEG_PT = 3;
+/** Clear air under a bracket before the next thing below it, in pt. */
+export const BRACKET_GAP_PT = 2.5;
+/** One bracket's share of the band: the rule, its legs, and the gap under it. */
+export const BRACKET_ROW_PT = BRACKET_LEG_PT + BRACKET_GAP_PT;
+
+/** The regions marked with a bracket, grouped so that overlapping ones land in different
+ *  groups. Each group is drawn on its own level above the sequence, outermost first, so two
+ *  brackets covering the same stretch stack instead of printing over each other. */
+export function bracketLevels(config: Config): Range[][] {
+  const bracket = config.highlightBracket ?? [];
+  const marked = config.highlightRegions.filter((_, i) => bracket[i]);
+  return marked.length ? groupOverlappingRegions(marked) : [];
+}
+
+/** Height (in cell units) of the bracket band between the ruler and the sequence row. */
+export function bracketUnits(config: Config): number {
+  return (bracketLevels(config).length * BRACKET_ROW_PT) / cellSize(config);
+}
+
+/** Offset between the frames of two overlapping regions, in pt. Frames are staggered so that
+ *  where regions overlap you can still tell which edge belongs to which. */
+export const REGION_FRAME_PAD_PT = 2;
+/** Air between the outermost region frame and the ruler above it, in pt. */
+const REGION_FRAME_GAP_PT = 3;
+
+/**
+ * Height (in cell units) of the gap between the ruler and the sequence row, or 0 when nothing
+ * is marked.
+ *
+ * A region's frame is drawn a little outside the row, and each further layer of overlapping
+ * regions is staggered another step out — so with several markings on the same stretch the
+ * outermost frame reaches up into the residue numbers. The gap is sized to the deepest stack
+ * on the figure, which keeps the ruler clear however many regions overlap, and costs nothing
+ * on a figure with no markings at all.
+ */
+export function regionFrameUnits(config: Config): number {
+  const bracket = config.highlightBracket ?? [];
+  // A bracketed region is annotated above the sequence instead of framed beside it, so it
+  // neither needs this headroom nor pushes anything else further out.
+  const framed = config.highlightRegions.filter((_, i) => !bracket[i]);
+  const groups = framed.length ? groupOverlappingRegions(framed).length : 0;
+  if (!groups) return 0;
+  return ((groups - 1) * REGION_FRAME_PAD_PT + REGION_FRAME_GAP_PT) / cellSize(config);
+}
+
+/**
+ * Height (in cell units) of the caption row above the ruler, or 0 when no highlight region
+ * carries a label. Captions used to share the ruler's baseline and suppress any tick number
+ * they collided with, which cost you the residue positions exactly where an annotation drew
+ * attention. They get their own row instead, and every panel reserves it so pagination and
+ * drawing agree on the header height.
+ */
+export function regionLabelUnits(config: Config): number {
+  const labels = config.highlightLabels ?? [];
+  const labelled = config.highlightRegions.some((_, i) => (labels[i] ?? '').trim() !== '');
+  if (!labelled) return 0;
+  // Sized from the caption font rather than fixed, so it still fits when the type is scaled.
+  return (config.fontSizes.tick * 1.4) / cellSize(config);
 }
 
 /**
@@ -321,7 +382,12 @@ function buildBands(
 // style is more compact), so their contribution is expressed as a fraction of a cell.
 function wrapRowHeight(bands: BandLayout[], panelStart: boolean, config: Config): number {
   const pitchUnits = rowPitch(config) / cellSize(config);
-  let h = RULER_UNITS + residueRowUnits(config);
+  let h =
+    regionLabelUnits(config) +
+    RULER_UNITS +
+    bracketUnits(config) +
+    regionFrameUnits(config) +
+    residueRowUnits(config);
   for (const band of bands) h += band.rowCount * pitchUnits + BAND_GAP_UNITS;
   if (panelStart) h += PANEL_GAP_UNITS;
   return h;
@@ -443,7 +509,12 @@ function computePages(rows: WrapRowLayout[], config: Config, seqLen: number): Pa
   const PAGE_HEIGHT_SLACK = 1.25; // cells: 1 for bottom padding, 0.25 for rounding
   const unitsPerPage = Math.max(1, printableHPt / cell - PAGE_HEIGHT_SLACK);
   const pitchUnits = rowPitch(config) / cell;
-  const headerUnits = RULER_UNITS + residueRowUnits(config);
+  const headerUnits =
+    regionLabelUnits(config) +
+    RULER_UNITS +
+    bracketUnits(config) +
+    regionFrameUnits(config) +
+    residueRowUnits(config);
 
   const pages: PageContent[] = [];
   let pageRows: WrapRowSlice[] = [];

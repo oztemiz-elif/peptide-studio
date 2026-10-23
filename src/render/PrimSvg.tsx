@@ -4,12 +4,8 @@
 // page's legend back to its default corner.
 
 import { forwardRef, useRef } from 'react';
-import { DrawnPage, Prim } from './draw';
+import { CENTER_BASELINE_RATIO, DrawnPage, Prim } from './draw';
 import { setConfig } from '../state/store';
-// Baseline shift that places a capital letter / digit's visual centre on the requested y,
-// replacing `dominant-baseline: central` for Word/Office compatibility. Shared with layout,
-// which needs the same number to work out how far a descender reaches below the row.
-import { CENTER_BASELINE_RATIO } from '../model/layout';
 
 function renderPrim(p: Prim, i: number) {
   switch (p.k) {

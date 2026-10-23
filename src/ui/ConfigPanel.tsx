@@ -1,12 +1,14 @@
 // All visual + structural configuration: intensity, colors, notation, filters, fonts,
 // highlights, modifications, splitting (both axes), page setup, and settings management.
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { saveAs } from 'file-saver';
 import { Config, LegendBarLabels, LegendStyle, Notation, PeptideStyle, Transformation } from '../state/config';
 import { exportConfigJson, importConfigJson, resetConfig, setConfig } from '../state/store';
 import { autoResiduesPerRow, cellSize } from '../model/layout';
 import { parseHighlightRegions, parseIndices } from '../model/regions';
+import { detectClusters, SENSITIVITY, sensitivityLevel } from '../model/clusters';
+import { computeIntensityScale } from '../model/filtering';
 import { Peptide, peptideId, peptideSequence } from '../model/peptides';
 
 interface Props {
@@ -16,6 +18,14 @@ interface Props {
 }
 
 const rangesToText = (rs: [number, number][]) => rs.map((r) => `${r[0]}-${r[1]}`).join(', ');
+
+// Outline colours cycled through detected clusters. Deliberately blues/purples/teals — the
+// intensity ramp runs yellow→orange→red, so a warm outline would read as data.
+const CLUSTER_COLORS = ['#1f77b4', '#6a3d9a', '#0f766e', '#334155', '#c2185b'];
+
+// Fill opacity for a new region, in percent. Visible as a tint without competing with the
+// intensity colours underneath; raise it per region when a region needs to stand out.
+const DEFAULT_OPACITY = 20;
 
 export function ConfigPanel({ config, peptides, proteinSeq }: Props) {
   return (
@@ -205,11 +215,17 @@ function AnnotationSection({
   // dropdown below would render two <option> elements with the same key, which is an
   // invalid duplicate React key and can corrupt the DOM on reconciliation.
   const ids = Array.from(new Set(peptides.map(peptideId)));
+  const [clusterStatus, setClusterStatus] = useState('');
+  const sensLevel = sensitivityLevel(config.clusterMinSharedPeptides, config.clusterEnrichmentFactor);
 
   function addRegion() {
     setConfig({
       highlightRegions: [...config.highlightRegions, [1, 1]],
       highlightColors: [...(config.highlightColors ?? []), '#000000'],
+      highlightSpanAll: [...(config.highlightSpanAll ?? []), false],
+      highlightBracket: [...(config.highlightBracket ?? []), false],
+      highlightLabels: [...(config.highlightLabels ?? []), ''],
+      highlightOpacity: [...(config.highlightOpacity ?? []), DEFAULT_OPACITY],
     });
   }
 
@@ -217,6 +233,10 @@ function AnnotationSection({
     setConfig({
       highlightRegions: config.highlightRegions.filter((_, j) => j !== i),
       highlightColors: (config.highlightColors ?? []).filter((_, j) => j !== i),
+      highlightSpanAll: (config.highlightSpanAll ?? []).filter((_, j) => j !== i),
+      highlightBracket: (config.highlightBracket ?? []).filter((_, j) => j !== i),
+      highlightLabels: (config.highlightLabels ?? []).filter((_, j) => j !== i),
+      highlightOpacity: (config.highlightOpacity ?? []).filter((_, j) => j !== i),
     });
   }
 
@@ -241,6 +261,127 @@ function AnnotationSection({
     setConfig({ highlightColors: colors });
   }
 
+  function updateOpacity(i: number, pct: number) {
+    const opacity = [...(config.highlightOpacity ?? [])];
+    while (opacity.length <= i) opacity.push(DEFAULT_OPACITY);
+    opacity[i] = Math.min(100, Math.max(0, pct));
+    setConfig({ highlightOpacity: opacity });
+  }
+
+  // Configs saved before these fields existed have shorter (or empty) parallel arrays, so
+  // every setter pads up to `i` with the default before writing.
+  //
+  // The three marking styles are exclusive, and the two flags behind them are not — so they
+  // are written as a pair here rather than left to the renderer's precedence rule. A figure
+  // saved before brackets existed has no flag at all and reads as its old style.
+  function updateStyle(i: number, style: 'row' | 'span' | 'bracket') {
+    const spans = [...(config.highlightSpanAll ?? [])];
+    const brackets = [...(config.highlightBracket ?? [])];
+    while (spans.length <= i) spans.push(false);
+    while (brackets.length <= i) brackets.push(false);
+    spans[i] = style === 'span';
+    brackets[i] = style === 'bracket';
+    setConfig({ highlightSpanAll: spans, highlightBracket: brackets });
+  }
+
+  const styleOf = (i: number): 'row' | 'span' | 'bracket' =>
+    (config.highlightBracket ?? [])[i] ? 'bracket' : (config.highlightSpanAll ?? [])[i] ? 'span' : 'row';
+
+  function updateLabel(i: number, text: string) {
+    const labels = [...(config.highlightLabels ?? [])];
+    while (labels.length <= i) labels.push('');
+    labels[i] = text;
+    setConfig({ highlightLabels: labels });
+  }
+
+  function identifyClusters() {
+    if (!proteinSeq) return setClusterStatus('Load a protein sequence first.');
+    if (!peptides.length) return setClusterStatus('Load a peptide table first.');
+    if (!config.intensityCols.length) return setClusterStatus('Select at least one intensity column first.');
+
+    const scale = computeIntensityScale(peptides, config.intensityCols, config);
+    const { clusters, sharedStarts, sharedEnds } = detectClusters(
+      peptides,
+      proteinSeq.length,
+      config.intensityCols,
+      config,
+      scale,
+      {
+        minLength: config.clusterMinLength,
+        maxLength: config.clusterMaxLength,
+        minSharedPeptides: config.clusterMinSharedPeptides,
+        enrichmentFactor: config.clusterEnrichmentFactor,
+        concentrationPercent: config.clusterConcentrationPercent,
+        mergeOverlapPercent: config.clusterMergeOverlapPercent,
+        hierarchical: config.clusterHierarchical,
+        membershipPercent: config.clusterMembershipPercent,
+      },
+    );
+
+    // Drop the previous detection run, keep everything added by hand, then append the new
+    // clusters. Re-running is therefore idempotent instead of piling up duplicates.
+    const keep = config.highlightRegions
+      .map((_, i) => i)
+      .filter((i) => !((config.highlightAuto ?? [])[i] ?? false));
+    const regions = keep.map((i) => config.highlightRegions[i]);
+    const colors = keep.map((i) => (config.highlightColors ?? [])[i] ?? '#000000');
+    const spans = keep.map((i) => (config.highlightSpanAll ?? [])[i] ?? false);
+    const brackets = keep.map((i) => (config.highlightBracket ?? [])[i] ?? false);
+    const labels = keep.map((i) => (config.highlightLabels ?? [])[i] ?? '');
+    const opacity = keep.map((i) => (config.highlightOpacity ?? [])[i] ?? DEFAULT_OPACITY);
+    const autos = keep.map(() => false);
+
+    // In hierarchical mode a derived sub-cluster is labelled against its parent ("2.1"), so
+    // the figure shows which boxes are the same species trimmed further.
+    const childIndex = new Map<number, number>();
+    clusters.forEach((c, i) => {
+      regions.push([c.start, c.end]);
+      colors.push(CLUSTER_COLORS[i % CLUSTER_COLORS.length]);
+      spans.push(true);
+      brackets.push(false); // a detected cluster is a span-all box, as before
+      if (c.parent == null) {
+        labels.push(`Cluster ${i + 1}`);
+      } else {
+        const n = (childIndex.get(c.parent) ?? 0) + 1;
+        childIndex.set(c.parent, n);
+        labels.push(`Cluster ${c.parent + 1}.${n}`);
+      }
+      opacity.push(DEFAULT_OPACITY);
+      autos.push(true);
+    });
+
+    setConfig({
+      highlightRegions: regions,
+      highlightColors: colors,
+      highlightSpanAll: spans,
+      highlightBracket: brackets,
+      highlightLabels: labels,
+      highlightOpacity: opacity,
+      highlightAuto: autos,
+    });
+
+    // Report how each far edge was decided, since that is how much you can trust it: an edge
+    // several peptides agreed on is reportable, one taken from the longest member is not.
+    const basis = `${sharedStarts} N-terminal and ${sharedEnds} C-terminal position${sharedEnds === 1 ? '' : 's'} stood out enough to anchor a cluster.`;
+    if (!clusters.length) {
+      setClusterStatus(`${basis} None survived — try moving Sensitivity toward "more, weaker", or a shorter minimum length.`);
+    } else {
+      const both = clusters.filter((c) => c.farEdge === 'shared').length;
+      const capped = clusters.filter((c) => c.farEdge === 'capped').length;
+      // Only the shared-terminus count is worth surfacing here: it says how many clusters have
+      // two edges you could quote. How the remainder were closed is explained in the manual
+      // rather than restated on every run.
+      const parts = [`${both} closed on a shared terminus`];
+      if (capped) parts.push(`${capped} cut short by max length`);
+      setClusterStatus(
+        `${basis} ${clusters.length} cluster${clusters.length === 1 ? '' : 's'} — ` +
+          parts.join(', ') +
+          ': ' +
+          clusters.map((c) => `${c.start}–${c.end}`).join(', '),
+      );
+    }
+  }
+
   return (
     <section>
       <h2>Annotations</h2>
@@ -250,41 +391,196 @@ function AnnotationSection({
           <span className="muted" style={{ fontSize: 11, marginTop: 2 }}>None added.</span>
         )}
         {config.highlightRegions.map((range, i) => (
-          <div key={i} className="row" style={{ alignItems: 'center', marginTop: 5 }}>
+          <div key={i} style={{ marginTop: 7 }}>
+            <div className="row" style={{ alignItems: 'center' }}>
+              <input
+                type="number"
+                min={1}
+                value={range[0]}
+                title="Start residue"
+                style={{ minWidth: 0 }}
+                onChange={(e) => updateStart(i, parseInt(e.target.value, 10) || 1)}
+              />
+              <span style={{ flex: '0 0 auto', color: '#9ca3af', fontWeight: 600 }}>–</span>
+              <input
+                type="number"
+                min={1}
+                value={range[1]}
+                title="End residue"
+                style={{ minWidth: 0 }}
+                onChange={(e) => updateEnd(i, parseInt(e.target.value, 10) || 1)}
+              />
+              <input
+                type="color"
+                value={(config.highlightColors ?? [])[i] ?? '#000000'}
+                title="Region colour — outline and fill"
+                onChange={(e) => updateColor(i, e.target.value)}
+                style={{ width: 32, height: 28, padding: 1, flex: '0 0 auto', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
+              />
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={(config.highlightOpacity ?? [])[i] ?? DEFAULT_OPACITY}
+                title="Fill opacity, %. The sequence always stays on top of the fill; where the fill is dark the letters turn white by themselves."
+                style={{ width: 54, minWidth: 0, flex: '0 0 auto' }}
+                onChange={(e) => updateOpacity(i, parseInt(e.target.value, 10) || 0)}
+              />
+              <button
+                title="Remove region"
+                style={{ flex: '0 0 auto', padding: '3px 7px' }}
+                onClick={() => removeRegion(i)}
+              >
+                ✕
+              </button>
+            </div>
             <input
-              type="number"
-              min={1}
-              value={range[0]}
-              title="Start residue"
-              style={{ minWidth: 0 }}
-              onChange={(e) => updateStart(i, parseInt(e.target.value, 10) || 1)}
+              type="text"
+              value={(config.highlightLabels ?? [])[i] ?? ''}
+              placeholder="Label (optional, e.g. active site)"
+              title="Caption drawn above the box, in the region's colour"
+              style={{ marginTop: 4, width: '100%' }}
+              onChange={(e) => updateLabel(i, e.target.value)}
             />
-            <span style={{ flex: '0 0 auto', color: '#9ca3af', fontWeight: 600 }}>–</span>
-            <input
-              type="number"
-              min={1}
-              value={range[1]}
-              title="End residue"
-              style={{ minWidth: 0 }}
-              onChange={(e) => updateEnd(i, parseInt(e.target.value, 10) || 1)}
-            />
-            <input
-              type="color"
-              value={(config.highlightColors ?? [])[i] ?? '#000000'}
-              title="Outline color"
-              onChange={(e) => updateColor(i, e.target.value)}
-              style={{ width: 32, height: 28, padding: 1, flex: '0 0 auto', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' }}
-            />
-            <button
-              title="Remove region"
-              style={{ flex: '0 0 auto', padding: '3px 7px' }}
-              onClick={() => removeRegion(i)}
+            <select
+              value={styleOf(i)}
+              onChange={(e) => updateStyle(i, e.target.value as 'row' | 'span' | 'bracket')}
+              style={{ marginTop: 3, width: '100%' }}
+              title="How this region is marked on the figure"
             >
-              ✕
-            </button>
+              <option value="row">Edges on the sequence row</option>
+              <option value="span">Edges spanning all time points</option>
+              <option value="bracket">Bracket above the sequence</option>
+            </select>
           </div>
         ))}
         <button style={{ marginTop: 7 }} onClick={addRegion}>+ Add region</button>
+      </div>
+
+      <div className="field">
+        <label>Detect clusters</label>
+        <span className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+          Finds groups of peptides sharing an N-terminus — or a C-terminus — at the same
+          residue. Open the <b>Coverage &amp; termini profile</b> above the figure to watch the
+          threshold move as you change the dial, and drag a cluster's edge there to correct it
+          by hand.
+        </span>
+
+        <div className="row" style={{ marginTop: 8, alignItems: 'flex-end' }}>
+          <NumField
+            label="Shortest cluster (aa)"
+            value={config.clusterMinLength}
+            onChange={(v) => setConfig({ clusterMinLength: Math.max(1, v ?? 1) })}
+          />
+          <NumField
+            label="Longest cluster (aa)"
+            value={config.clusterMaxLength}
+            onChange={(v) => setConfig({ clusterMaxLength: Math.max(1, v ?? 1) })}
+          />
+        </div>
+
+        <div className="field" style={{ marginTop: 8, marginBottom: 0 }}>
+          <label>Sensitivity — {sensLevel >= 0 ? SENSITIVITY[sensLevel].label : 'Custom'}</label>
+          <input
+            type="range"
+            min={0}
+            max={SENSITIVITY.length - 1}
+            step={1}
+            value={sensLevel >= 0 ? sensLevel : 2}
+            onChange={(e) => {
+              const s = SENSITIVITY[parseInt(e.target.value, 10)];
+              setConfig({
+                clusterMinSharedPeptides: s.minSharedPeptides,
+                clusterEnrichmentFactor: s.enrichmentFactor,
+              });
+            }}
+          />
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 10, color: '#9ca3af' }}>
+            <span>fewer, surer</span>
+            <span>more, weaker</span>
+          </div>
+          <span className="muted" style={{ fontSize: 11 }}>
+            A residue starts a cluster when at least <b>{config.clusterMinSharedPeptides}</b> peptides
+            share it as their N-terminus (or C-terminus), and that is at least{' '}
+            <b>{config.clusterEnrichmentFactor}×</b> as many as a typical residue nearby.
+          </span>
+        </div>
+
+        <button style={{ marginTop: 9 }} onClick={identifyClusters}>Identify clusters</button>
+        {clusterStatus && (
+          <span className="muted" style={{ fontSize: 11, marginTop: 4 }}>{clusterStatus}</span>
+        )}
+        <span className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+          Re-running replaces the clusters found last time; anything you added or dragged is kept.
+        </span>
+
+        <details style={{ marginTop: 9 }}>
+          <summary style={{ fontSize: 12 }}>Fine tuning</summary>
+          <div style={{ marginTop: 7 }}>
+            <div className="row">
+              <NumField
+                label="Min termini at a position"
+                value={config.clusterMinSharedPeptides}
+                onChange={(v) => setConfig({ clusterMinSharedPeptides: Math.max(1, v ?? 1) })}
+              />
+              <NumField
+                label="Times a typical nearby residue (×)"
+                value={config.clusterEnrichmentFactor}
+                onChange={(v) => setConfig({ clusterEnrichmentFactor: Math.max(0, v ?? 0) })}
+              />
+            </div>
+            <span className="muted" style={{ fontSize: 11 }}>
+              The two the dial sets. Editing them directly shows the dial as “Custom”. The second
+              compares a residue with the ones around it, so the same value means the same thing
+              in a busy protein and a sparse one.
+            </span>
+
+            <NumField
+              label="Shared terminus needed to close a cluster (%)"
+              value={config.clusterConcentrationPercent}
+              onChange={(v) => setConfig({ clusterConcentrationPercent: Math.min(100, Math.max(1, v ?? 40)) })}
+            />
+            <span className="muted" style={{ fontSize: 11 }}>
+              A cluster is anchored where a group shares one terminus. It closes at a residue
+              where at least this share of them share the <i>other</i> terminus. Below it there
+              is no agreed second edge, so the cluster stops where the group thins out. Works
+              the same whichever terminus the group happens to share.
+            </span>
+
+            <NumField
+              label="Peptide counts as part of a cluster at (%)"
+              value={config.clusterMembershipPercent}
+              onChange={(v) => setConfig({ clusterMembershipPercent: Math.min(100, Math.max(1, v ?? 50)) })}
+            />
+            <span className="muted" style={{ fontSize: 11 }}>
+              A peptide counts when it shares at least this much of the cluster <i>or</i> this
+              much of itself with it — so a short peptide sitting inside counts, a long one
+              spanning the whole cluster counts, and one merely clipping an edge does not. Sets
+              the peptide count and the intensity figures in the table, and the count clusters
+              are ranked by.
+            </span>
+
+            <NumField
+              label="Merge clusters overlapping by more than (%)"
+              value={config.clusterMergeOverlapPercent}
+              onChange={(v) => setConfig({ clusterMergeOverlapPercent: Math.min(100, Math.max(1, v ?? 80)) })}
+            />
+            <span className="muted" style={{ fontSize: 11 }}>
+              Only for clusters of similar length side by side. One sitting wholly inside another
+              is always merged, whatever this says.
+            </span>
+
+            <label className="cb" style={{ marginTop: 6 }}>
+              <input
+                type="checkbox"
+                checked={config.clusterHierarchical}
+                onChange={(e) => setConfig({ clusterHierarchical: e.target.checked })}
+              />
+              Keep sub-clusters separately (2.1, 2.2…) instead of merging into the parent
+            </label>
+          </div>
+        </details>
       </div>
 
       <div className="field">

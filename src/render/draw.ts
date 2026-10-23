@@ -4,7 +4,22 @@
 // a configured font size of N renders as N px, so print/export honor the chosen sizes.
 
 import { Config } from '../state/config';
-import { cellSize, FigureLayout, leftLabelWidth, residueRowUnits, rowPitch, WrapRowSlice } from '../model/layout';
+import {
+  CENTER_BASELINE_RATIO,
+  cellSize,
+  FigureLayout,
+  leftLabelWidth,
+  BRACKET_LEG_PT,
+  bracketLevels,
+  BRACKET_ROW_PT,
+  bracketUnits,
+  REGION_FRAME_PAD_PT,
+  regionFrameUnits,
+  regionLabelUnits,
+  residueRowUnits,
+  rowPitch,
+  WrapRowSlice,
+} from '../model/layout';
 import { formatRange } from '../model/intensity';
 import { groupOverlappingRegions } from '../model/regions';
 
@@ -60,11 +75,54 @@ export interface DrawnPage {
   legendBox?: { x: number; y: number; w: number; h: number };
 }
 
+// Re-exported so PrimSvg, which turns the centring into a baseline, keeps one source for it.
+export { CENTER_BASELINE_RATIO };
+
 const RULER_UNITS = 1.6;
 const BAND_GAP_UNITS = 1;
 const PANEL_GAP_UNITS = 1.5;
 const TITLE_UNITS = 3;
 const PEPTIDE_ALPHA = 0.7;
+/** Wash behind a sequence-row-only highlight region — a faint tint under the letters. */
+const HIGHLIGHT_WASH_ALPHA = 0.12;
+/**
+ * Wash behind a "span all time points" region. Painted at the very back, under the peptide
+ * cells, so it reads as a tinted band across every track rather than a veil over the data.
+ * Peptides themselves are drawn at PEPTIDE_ALPHA (0.7), so ~30% of this wash still shows
+ * through them and tints their intensity colour slightly — keep it faint for that reason.
+ */
+const SPAN_WASH_ALPHA = 0.2;
+
+/** `#rgb` / `#rrggbb` to components; anything unparseable reads as black. */
+function hexRgb(hex: string): [number, number, number] {
+  const s = (hex ?? '').replace('#', '').trim();
+  const full = s.length === 3 ? s.split('').map((c) => c + c).join('') : s;
+  if (full.length !== 6) return [0, 0, 0];
+  const n = parseInt(full, 16);
+  return Number.isFinite(n) ? [(n >> 16) & 255, (n >> 8) & 255, n & 255] : [0, 0, 0];
+}
+
+/**
+ * Ink for a letter sitting on `washes`, each `[hex, alpha]`, painted over the white page in
+ * order. The letters are always drawn on top of the washes, so opacity alone never hides the
+ * sequence — the only way to lose it is contrast, which is what this fixes: once the composite
+ * is dark enough, the letter is drawn white instead of black.
+ */
+export function inkOnWashes(washes: [string, number][]): string {
+  let r = 255;
+  let g = 255;
+  let b = 255;
+  for (const [hex, alpha] of washes) {
+    if (!(alpha > 0)) continue;
+    const [cr, cg, cb] = hexRgb(hex);
+    const a = Math.min(1, alpha);
+    r += (cr - r) * a;
+    g += (cg - g) * a;
+    b += (cb - b) * a;
+  }
+  // Rec. 601 luma, which tracks perceived brightness closely enough for a two-way choice.
+  return 0.299 * r + 0.587 * g + 0.114 * b < 140 ? '#ffffff' : '#000000';
+}
 
 export function pageCount(figure: FigureLayout): number {
   return Math.max(1, figure.pages.length);
@@ -134,13 +192,45 @@ export function drawPage(
   }
 
   const modSet = config.modifications;
-  const highlightGroups = groupOverlappingRegions(config.highlightRegions);
+  const bracketFlags = config.highlightBracket ?? [];
+  const isBracket = new Set(
+    config.highlightRegions.filter((_, i) => bracketFlags[i]).map((r) => `${r[0]}-${r[1]}`),
+  );
+  // Only the framed regions are grouped for the edge stagger — a bracketed one is annotated
+  // above the sequence, so counting it here would push a neighbour's edges out for nothing.
+  const highlightGroups = groupOverlappingRegions(
+    config.highlightRegions.filter((_, i) => !bracketFlags[i]),
+  );
   // Map "start-end" → chosen color so we can look up stroke color inside the row loop
   // even after groupOverlappingRegions reorders the regions.
   const highlightColorMap = new Map<string, string>(
     config.highlightRegions.map((r, i) => [
       `${r[0]}-${r[1]}`,
       (config.highlightColors ?? [])[i] ?? '#000000',
+    ]),
+  );
+  // Same keying for the two other per-region settings: whether the box spans every
+  // time-point band, and its optional caption.
+  // Fill opacity per region. Unset falls back to the old fixed values so a figure made before
+  // the control existed still looks the way it did.
+  const highlightAlphaMap = new Map<string, number>(
+    config.highlightRegions.map((r, i) => {
+      const set = (config.highlightOpacity ?? [])[i];
+      const span = (config.highlightSpanAll ?? [])[i] ?? false;
+      const pct = set ?? (span ? SPAN_WASH_ALPHA : HIGHLIGHT_WASH_ALPHA) * 100;
+      return [`${r[0]}-${r[1]}`, Math.min(100, Math.max(0, pct)) / 100];
+    }),
+  );
+  const highlightSpanMap = new Map<string, boolean>(
+    config.highlightRegions.map((r, i) => [
+      `${r[0]}-${r[1]}`,
+      (config.highlightSpanAll ?? [])[i] ?? false,
+    ]),
+  );
+  const highlightLabelMap = new Map<string, string>(
+    config.highlightRegions.map((r, i) => [
+      `${r[0]}-${r[1]}`,
+      ((config.highlightLabels ?? [])[i] ?? '').trim(),
     ]),
   );
 
@@ -157,6 +247,32 @@ export function drawPage(
     if (!continued && row.panelStart && si !== 0) {
       y += PANEL_GAP_UNITS * cell;
     }
+    /**
+     * A marked region's edges: the two vertical rules at its first and last residue, and no
+     * top or bottom. What a region asserts is where it begins and ends along the sequence —
+     * a closed box also draws a horizontal rule across the letters' own row, which competes
+     * with the sequence underline and buries a descender. The wash behind the letters already
+     * shows the extent; these two lines say precisely where it stops.
+     *
+     * An edge falling at a wrap or panel boundary is suppressed. That edge is where the row
+     * ran out, not where the region did, and a rule there would read as a boundary the data
+     * never had — so a region continuing onto the next row simply carries no line at the join.
+     */
+    const regionEdges = (
+      x: number,
+      top: number,
+      w: number,
+      h: number,
+      colour: string,
+      drawStart: boolean,
+      drawEnd: boolean,
+    ) => {
+      const edge = (ex: number) =>
+        prims.push({ k: 'line', x1: ex, y1: top, x2: ex, y2: top + h, stroke: colour, sw: 1.5 });
+      if (drawStart) edge(x);
+      if (drawEnd) edge(x + w);
+    };
+
     const panelFrameTop = y;
     const panelRight = colLeft + (row.endRes - row.startRes + 1) * cell;
     const lastBand = row.bands[row.bands.length - 1];
@@ -164,8 +280,65 @@ export function drawPage(
     let panelEnds = false;
     const x0 = (res: number) => colLeft + (res - row.startRes) * cell;
 
-    // --- ruler ---
-    const rulerY = y + RULER_UNITS * cell;
+    // --- region captions, in their own row above the ruler ---
+    // Reserving a row (rather than sharing the ruler's baseline and hiding whichever tick
+    // numbers collided) keeps every residue position readable, which matters most exactly
+    // where an annotation is drawing the eye. layout.ts reserves the same height, so
+    // pagination and drawing stay in step.
+    const labelBand = regionLabelUnits(config) * cell;
+    const rulerY = y + labelBand + RULER_UNITS * cell;
+
+    // How far the sequence sits below the ruler: the bracket band plus the headroom stacked
+    // region frames need. A tick used to be a 2 pt nub resting on the letters; now that
+    // annotations can push them apart, that nub would float halfway up with nothing joining a
+    // number to the residue it names. So the tick reaches part of the way into the gap —
+    // enough to point unmistakably at its residue, well short of closing the distance, which
+    // would read as a gridline rather than a tick. With nothing annotated the gap is zero and
+    // the tick is exactly the 2 pt it always was.
+    const rulerGap = (bracketUnits(config) + regionFrameUnits(config)) * cell;
+    const TICK_UP_PT = 2;
+    const TICK_REACH = 0.5; // share of the gap the tick covers
+    const TICK_MAX_PT = 5;
+    const tickLen = Math.min(TICK_UP_PT + rulerGap * TICK_REACH, TICK_MAX_PT);
+
+    const REGION_LABEL_GAP_PT = 3;
+    const regionLabels: {
+      x: number;
+      text: string;
+      anchor: 'start' | 'middle' | 'end';
+      color: string;
+      left: number;
+      right: number;
+    }[] = [];
+    for (const [rs, re] of config.highlightRegions) {
+      const text = highlightLabelMap.get(`${rs}-${re}`) ?? '';
+      if (!text) continue;
+      const s = Math.max(rs, row.startRes);
+      const e = Math.min(re, row.endRes);
+      if (s > e) continue; // region isn't visible in this panel
+      const size = config.fontSizes.tick;
+      const w = text.length * size * 0.62;
+      const mid = (x0(s) + x0(e) + cell) / 2;
+      // Keep a caption wider than its region inside the panel frame, mirroring the ticks.
+      let anchor: 'start' | 'middle' | 'end' = 'middle';
+      let labelX = mid;
+      if (mid - w / 2 < colLeft) {
+        anchor = 'start';
+        labelX = colLeft + 2;
+      } else if (mid + w / 2 > panelRight) {
+        anchor = 'end';
+        labelX = panelRight - 2;
+      }
+      const left = anchor === 'start' ? labelX : anchor === 'end' ? labelX - w : mid - w / 2;
+      regionLabels.push({
+        x: labelX,
+        text,
+        anchor,
+        color: highlightColorMap.get(`${rs}-${re}`) ?? '#000000',
+        left,
+        right: left + w,
+      });
+    }
     // The forced label at the panel's first residue (e.g. "111") sits right next to the
     // next multiple-of-5 tick (e.g. "115") whenever the panel doesn't start on a multiple
     // of 5 — with tight cell packing there isn't always 4+ cells of room between them, so
@@ -194,60 +367,133 @@ export function drawPage(
         const labelLeft = anchor === 'start' ? labelX : anchor === 'end' ? labelX - labelWidth : labelX - halfWidth;
         const labelRight = labelLeft + labelWidth;
         if (res !== row.startRes && labelLeft < prevLabelRight + TICK_LABEL_GAP_PT) continue;
-
         prims.push({ k: 'text', x: labelX, y: rulerY - 4, text, size: config.fontSizes.tick, anchor, family: config.fontFamily, fill: '#333' });
-        prims.push({ k: 'line', x1: tickX, y1: rulerY - 2, x2: tickX, y2: rulerY, stroke: '#999', sw: 0.8 });
         prevLabelRight = labelRight;
+        prims.push({ k: 'line', x1: tickX, y1: rulerY - TICK_UP_PT, x2: tickX, y2: rulerY - TICK_UP_PT + tickLen, stroke: '#555', sw: 1 });
       }
     }
-    y = rulerY;
+    // Captions sit on their own baseline just above the ruler. Overlapping regions can put
+    // two captions on top of each other, so a later one that would collide with an already
+    // drawn caption is skipped rather than printed as a smudge — shorten a label to get it
+    // back, or turn off the neighbouring region's caption.
+    let prevCaptionRight = -Infinity;
+    const captionY = y + labelBand - 2;
+    for (const rl of [...regionLabels].sort((a, b) => a.left - b.left)) {
+      if (rl.left < prevCaptionRight + REGION_LABEL_GAP_PT) continue;
+      prims.push({ k: 'text', x: rl.x, y: captionY, text: rl.text, size: config.fontSizes.tick, anchor: rl.anchor, weight: 'bold', family: config.fontFamily, fill: rl.color });
+      prevCaptionRight = rl.right;
+    }
+    // --- brackets above the sequence ---
+    // A rule across the range with a short leg turning down at each end, pointing at the
+    // letters it covers. Levels are stacked outermost-first, so where two brackets overlap the
+    // wider one sits above the narrower and neither is printed over the other. An end falling
+    // at a wrap or panel boundary loses its leg, for the same reason a region edge does: the
+    // row ran out there, the range did not.
+    const levels = bracketLevels(config);
+    levels.forEach((level, li) => {
+      const ruleY = rulerY + (levels.length - 1 - li) * BRACKET_ROW_PT + BRACKET_LEG_PT;
+      for (const [rs, re] of level) {
+        const s = Math.max(rs, row.startRes);
+        const e = Math.min(re, row.endRes);
+        if (s > e) continue;
+        const colour = highlightColorMap.get(`${rs}-${re}`) ?? '#000000';
+        const lx = x0(s);
+        const rx = x0(e) + cell;
+        prims.push({ k: 'line', x1: lx, y1: ruleY, x2: rx, y2: ruleY, stroke: colour, sw: 1.2 });
+        if (rs >= row.startRes) {
+          prims.push({ k: 'line', x1: lx, y1: ruleY, x2: lx, y2: ruleY + BRACKET_LEG_PT, stroke: colour, sw: 1.2 });
+        }
+        if (re <= row.endRes) {
+          prims.push({ k: 'line', x1: rx, y1: ruleY, x2: rx, y2: ruleY + BRACKET_LEG_PT, stroke: colour, sw: 1.2 });
+        }
+      }
+    });
+    y = rulerY + bracketUnits(config) * cell;
+
+    // Clear of the ruler by however far the deepest stack of region frames reaches above the
+    // sequence — see regionFrameUnits. Zero when nothing is marked, so an unannotated figure
+    // is laid out exactly as before.
+    y += regionFrameUnits(config) * cell;
 
     // --- residue-letter row ---
     const resRowY = y;
-    // Normally one cell, but taller when a descender would otherwise finish on the rule under
-    // the row — see residueRowUnits. Everything bounding this row is sized from it rather than
-    // from `cell`, so a region's wash and outline grow with the row instead of cutting a Q's
-    // tail. The letters themselves stay centred on the cell and do not move.
+    // Normally one cell, but grown when the cell is shorter than a letter with a descender —
+    // see residueRowUnits. Everything drawn on this row is sized from it rather than from
+    // `cell`, so a region's wash and outline grow with the row instead of cutting across a Q.
     const resRowH = residueRowUnits(config) * cell;
 
     // Highlight fill washes (clipped to window) are pushed before the letters so they sit
     // BEHIND the text, like a highlighter mark — not on top of it. This also keeps the EPS
     // export correct: PostScript has no true alpha compositing, so a translucent fill drawn
     // after opaque text would paint over and hide it instead of tinting it (see toEps.ts).
+    //
+    // A span-all region's wash must reach the bottom of the last band, which isn't known
+    // until those bands are laid out — but it still has to be painted before the letters,
+    // the gridlines and the peptide cells. So its rect is built after the band loop and
+    // spliced back in at this index, keeping it at the very back of the paint order.
+    const washInsertAt = prims.length;
     highlightGroups.forEach((group, gi) => {
       for (const [rs, re] of group) {
+        if (highlightSpanMap.get(`${rs}-${re}`)) continue; // full-height wash spliced in later
         const s = Math.max(rs, row.startRes);
         const e = Math.min(re, row.endRes);
         if (s > e) continue;
-        const pad = gi * 2;
+        const pad = gi * REGION_FRAME_PAD_PT;
         const hColor = highlightColorMap.get(`${rs}-${re}`) ?? '#000000';
-        prims.push({ k: 'rect', x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: resRowH + pad * 2, fill: hColor, opacity: 0.12 });
+        prims.push({ k: 'rect', x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: resRowH + pad * 2, fill: hColor, opacity: highlightAlphaMap.get(`${rs}-${re}`) ?? HIGHLIGHT_WASH_ALPHA });
       }
     });
+    // A bracketed region keeps its wash — the bracket says where the range is, the tint says
+    // which residues are in it. No stagger: brackets are separated by stacking, not by padding.
+    for (const [rs, re] of config.highlightRegions) {
+      if (!isBracket.has(`${rs}-${re}`)) continue;
+      const s = Math.max(rs, row.startRes);
+      const e = Math.min(re, row.endRes);
+      if (s > e) continue;
+      const alpha = highlightAlphaMap.get(`${rs}-${re}`) ?? HIGHLIGHT_WASH_ALPHA;
+      if (!(alpha > 0)) continue;
+      prims.push({ k: 'rect', x: x0(s), y: resRowY, w: (e - s + 1) * cell, h: resRowH, fill: highlightColorMap.get(`${rs}-${re}`) ?? '#000000', opacity: alpha });
+    }
+
+    // Every wash covering a residue, in paint order, so the letter can be inked for legibility
+    // against whatever it ends up sitting on — including several overlapping regions.
+    const washesAt = (res: number): [string, number][] =>
+      config.highlightRegions
+        .filter(([rs, re]) => res >= rs && res <= re)
+        .map(([rs, re]) => [
+          highlightColorMap.get(`${rs}-${re}`) ?? '#000000',
+          highlightAlphaMap.get(`${rs}-${re}`) ?? 0,
+        ]);
 
     for (let res = row.startRes; res <= row.endRes; res++) {
       prims.push({
         k: 'text',
         x: x0(res) + cell / 2,
+        // Centred on the cell, not on the row: the row may be taller (see residueRowUnits),
+        // and that extra height is descender room below the letters, not a reason to move them.
         y: resRowY + cell * 0.5,
         text: proteinSeq[res - 1] ?? '',
         size: config.fontSizes.residue,
         anchor: 'middle',
         family: config.fontFamily,
-        fill: '#000',
+        fill: inkOnWashes(washesAt(res)),
         center: true,
       });
     }
 
-    // --- highlight border outlines (drawn on top; a stroke-only rect never covers content) ---
+    // --- highlight region edges (drawn on top; lines never cover content) ---
+    // Only the sequence-row-only regions are marked here. A "span all time points" region
+    // needs the panel's bottom edge, which isn't known until the bands below are laid out,
+    // so its (taller) edges are deferred to after the band loop.
     highlightGroups.forEach((group, gi) => {
       for (const [rs, re] of group) {
+        if (highlightSpanMap.get(`${rs}-${re}`)) continue;
         const s = Math.max(rs, row.startRes);
         const e = Math.min(re, row.endRes);
         if (s > e) continue;
-        const pad = gi * 2;
+        const pad = gi * REGION_FRAME_PAD_PT;
         const hColor = highlightColorMap.get(`${rs}-${re}`) ?? '#000000';
-        prims.push({ k: 'rect', x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: resRowH + pad * 2, fill: 'none', stroke: hColor, sw: 1.5 });
+        regionEdges(x0(s) - pad, resRowY - pad, (e - s + 1) * cell + pad * 2, resRowH + pad * 2, hColor, rs >= row.startRes, re <= row.endRes);
       }
     });
 
@@ -341,6 +587,33 @@ export function drawPage(
         y = sepY; // band continues onto the next page/column
       }
     }
+
+    // --- full-height highlight boxes ---
+    // One tall rectangle from the reference-sequence row down to the bottom of the last band
+    // drawn in this slice, so the residue range reads as boxed across every time point. A
+    // region wider than the panel is clipped to the visible residues, so a range crossing a
+    // wrap/page boundary gets its own box on each panel it touches.
+    //
+    // The two halves land at opposite ends of the paint order: the outline is pushed here so
+    // the stroke sits above the peptide cells (a stroke-only rect never hides what's under
+    // it), while the tinted background is spliced back to `washInsertAt` so it sits behind
+    // the letters, gridlines and peptides.
+    const spanBottom = Math.max(panelFrameBottom, resRowY + resRowH);
+    const spanWashes: Prim[] = [];
+    highlightGroups.forEach((group, gi) => {
+      for (const [rs, re] of group) {
+        if (!highlightSpanMap.get(`${rs}-${re}`)) continue;
+        const s = Math.max(rs, row.startRes);
+        const e = Math.min(re, row.endRes);
+        if (s > e) continue;
+        const pad = gi * REGION_FRAME_PAD_PT;
+        const hColor = highlightColorMap.get(`${rs}-${re}`) ?? '#000000';
+        const box = { x: x0(s) - pad, y: resRowY - pad, w: (e - s + 1) * cell + pad * 2, h: spanBottom - resRowY + pad * 2 };
+        spanWashes.push({ k: 'rect', ...box, fill: hColor, opacity: highlightAlphaMap.get(`${rs}-${re}`) ?? SPAN_WASH_ALPHA });
+        regionEdges(box.x, box.y, box.w, box.h, hColor, rs >= row.startRes, re <= row.endRes);
+      }
+    });
+    prims.splice(washInsertAt, 0, ...spanWashes);
 
     // --- this panel's frame ---
     prims.push(

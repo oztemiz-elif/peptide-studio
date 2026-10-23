@@ -104,3 +104,32 @@ button:hover { filter: brightness(0.97); }
 .metric .n { font-size: 20px; font-weight: 700; }
 .metric .l { font-size: 11px; color: #6b7280; }
 details summary { cursor: pointer; font-weight: 600; }
+
+/* --- Coverage & termini profile (on-screen analysis view; never printed or exported) --- */
+.profile { margin-bottom: 14px; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+.profile-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.profile-head button { font-weight: 600; }
+.profile-head .muted { font-size: 12px; color: #6b7280; }
+.profile-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 10px 0 4px; font-size: 12px; color: #374151; }
+.profile-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.profile-legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.profile-legend i.ln { width: 16px; height: 2px; border-radius: 1px; }
+.profile-plot { overflow-x: auto; }
+/* Natural size, not stretched: the SVG width is measured from this container, so scaling
+   it again would resize the type with the window. Overflow only bites below the minimum. */
+.profile-plot svg { display: block; }
+.profile-readout {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline;
+  font-size: 12px; color: #374151; border-top: 1px solid var(--border);
+  margin-top: 8px; padding-top: 8px; min-height: 19px;
+}
+.profile-readout .muted { color: #9ca3af; }
+.profile-save { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: #6b7280; }
+.profile-save button { font-size: 11px; padding: 2px 8px; }
+.cluster-report h3 { font-size: 14px; margin: 0 0 4px; }
+.cluster-report table { font-variant-numeric: tabular-nums; }
+.cluster-report td:first-child { font-weight: 600; white-space: nowrap; }
+.profile-zoom { display: inline-flex; align-items: center; gap: 6px; color: #374151; }
+.profile-zoom button { font-size: 12px; padding: 1px 8px; line-height: 1.4; }
+.profile-zoom b { font-variant-numeric: tabular-nums; min-width: 66px; text-align: center; }
+.profile-save .sep { color: #cbd0d8; margin: 0 2px; }
